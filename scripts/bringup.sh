@@ -31,8 +31,40 @@ set -euo pipefail
 HERE="$(cd "$(dirname "$0")" && pwd)"
 ROOT="$(cd "$HERE/.." && pwd)"
 
-IMAGE="${IMAGE:-D:/raphael-ios/boot/TEST_Z_0111.img}"
-WORK_DIR="${WORK_DIR:-D:/raphael-ios/out/hfsroot2}"
+IMAGE="${IMAGE:-}"
+if [ -z "$IMAGE" ]; then
+  case "$(uname -s)" in
+    Darwin|Linux) IMAGE="${RAPHAEL_HOME:-$HOME/raphael-ios}/boot/boot-raphael.img" ;;
+    *)            IMAGE="${RAPHAEL_HOME:-D:/raphael-ios}/boot/TEST_Z_0111.img" ;;
+  esac
+fi
+case "$(uname -s)" in
+  Darwin|Linux) HOST_HOME="${RAPHAEL_HOME:-$HOME/raphael-ios}" ;;
+  *)            HOST_HOME="${RAPHAEL_HOME:-D:/raphael-ios}" ;;
+esac
+WORK_DIR="${WORK_DIR:-$HOST_HOME/out/hfsroot2}"
+
+# macOS ships no timeout(1) (it is GNU coreutils); a boot that hangs is the
+# one thing this script must survive, so provide the fallback rather than
+# depending on brew having installed gtimeout.
+if ! command -v timeout >/dev/null 2>&1; then
+  if command -v gtimeout >/dev/null 2>&1; then
+    timeout() { gtimeout "$@"; }
+  else
+    timeout() {
+      local secs="$1"; shift
+      local fired; fired="$(mktemp -u /tmp/bringup-timeout.XXXXXX)"
+      "$@" & local pid=$!
+      ( sleep "$secs"; : > "$fired"; kill -TERM "$pid" 2>/dev/null ) & local dog=$!
+      { wait "$pid"; } 2>/dev/null; local rc=$?
+      kill "$dog" 2>/dev/null
+      wait "$dog" 2>/dev/null
+      if [ -e "$fired" ]; then rc=124; fi   # same status GNU timeout uses
+      rm -f "$fired"
+      return $rc
+    }
+  fi
+fi
 PIECES_DIR="${PIECES_DIR:-$WORK_DIR/dense-pieces}"
 DENSE="${DENSE:-$WORK_DIR/ios16-root-dense.simg}"
 LOG="${LOG:-$WORK_DIR/ios-console.log}"

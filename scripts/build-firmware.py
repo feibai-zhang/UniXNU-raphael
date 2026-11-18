@@ -61,6 +61,58 @@ if cfg_src.is_file() and not cfg_dst.is_file():
     shutil.copy(cfg_src, cfg_dst)
     print(f"firmware: created {cfg_dst.name}")
 
+# aloha-guacamole.patch injects the UniXNU boot manager into the DXE of the
+# *guacamole* device directory only:
+#
+#     Device/oneplus-guacamole/DXE.inc        (the FV contents)
+#     Device/oneplus-guacamole/DXE.dsc.inc    (the module list)
+#
+# raphael builds with TARGET_DEVICE=xiaomi-raphael, and Aloha ships a native
+# device directory for it, so those edits never landed.  The firmware was a
+# stock Aloha environment with no payload driver at all: BDS had nothing to
+# boot and fell through to the Mu "Device Recovery" screen (the wrench + USB
+# + QR for aka.ms/devicerecovery).  add_unixnu_dxe() applies the same four
+# lines to whatever device this board actually targets.
+UNIXNU_DXE_MODULES = (
+    "AndromedaPkg/Driver/ShengBootMemoryDxe/ShengBootMemoryDxe.inf",
+    "UniXNUPkg/Application/UniXNU/UniXNU.inf",
+    "UniXNUPkg/Driver/UniXNUDxe/UniXNUDxe.inf",
+    "DarwinBootPkg/Driver/DarwinBoot.inf",
+)
+# Same form firmware-only.yml appends by hand: the per-module FdtLib override
+# is what makes these drivers link (the global [LibraryClasses] entry alone is
+# not enough for the FV to come out with DarwinBoot in it).
+UNIXNU_DXE_DSC = [
+    "%s {\n  <LibraryClasses>\n    FdtLib|MdePkg/Library/BaseFdtLib/BaseFdtLib.inf\n}"
+    % inf for inf in UNIXNU_DXE_MODULES
+]
+UNIXNU_DXE_INC = [f"INF {inf}" for inf in UNIXNU_DXE_MODULES]
+
+
+def add_unixnu_dxe(device_dir):
+    """Make the device's DXE build the UniXNU modules; idempotent."""
+    for name, lines, probe in (
+            ("DXE.dsc.inc", UNIXNU_DXE_DSC, lambda line, text: line.split(" {")[0] in text),
+            ("DXE.inc", UNIXNU_DXE_INC, lambda line, text: line in text)):
+        path = device_dir / name
+        if not path.is_file():
+            raise SystemExit(
+                f"firmware: {path} is missing; cannot add the UniXNU DXE "
+                f"(dir has: {sorted(p.name for p in device_dir.iterdir())})")
+        text = path.read_text()
+        missing = [line for line in lines if not probe(line, text)]
+        if not missing:
+            print(f"firmware: {device_dir.name}/{name} already builds UniXNU")
+            continue
+        with path.open("a") as fh:
+            if not text.endswith("\n"):
+                fh.write("\n")
+            fh.write("\n" + "\n".join(missing) + "\n")
+        print(f"firmware: {device_dir.name}/{name} += {len(missing)} UniXNU module(s)")
+
+
+add_unixnu_dxe(DST)
+
 board = tomllib.loads((ROOT / "board.toml").read_text())
 ctx = types.SimpleNamespace(
     board=board,

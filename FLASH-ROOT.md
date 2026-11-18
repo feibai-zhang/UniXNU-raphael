@@ -167,13 +167,64 @@ matches it with its own `usbser.inf`, so **no third-party driver is needed**:
 python3 scripts/console_log.py - ios-console.log
 ```
 
-The script finds the COM port by itself, reconnects if the phone reboots, and
+The script finds the port by itself, reconnects if the phone reboots, and
 writes everything the kernel prints. `scripts/bringup.sh` runs it right after
 `fastboot boot`, so the bring-up is one command:
 
 ```bash
 bash scripts/bringup.sh          # verify -> flash -> boot -> read the log
 ```
+
+### macOS
+
+No driver and no `usbser`: `AppleUSBACMData` binds the interface and exports
+it as `/dev/cu.usbmodem*`, so the same script works unchanged:
+
+```bash
+python3 scripts/console_log.py --list        # what is on the bus, and where it would read
+python3 scripts/console_log.py - ios-console.log
+```
+
+It opens the tty `O_RDWR|O_NONBLOCK`, sets it raw with `CLOCAL|CREAD`, **no
+`CRTSCTS`** and **`HUPCL` off** (closing the reader must not drop DTR and make
+the phone think the host left), then asserts DTR/RTS explicitly because the
+kernel only starts pushing the ring once the host is there. None of the
+Windows control-transfer trouble below can happen on a tty -- there is no
+`SET_LINE_CODING` to stall.
+
+`--list` deliberately also prints the raw USB devices. A phone that is
+plugged in but not in the kernel -- still in Android, still in fastboot, or
+blocked by macOS -- shows up as a USB device with **no serial port at all**,
+and that is the difference between "wrong cable" and "wrong mode".
+
+### macOS blocks the phone before any of this runs
+
+On Apple Silicon, macOS gates new USB devices behind
+**System Settings > Privacy & Security > "Allow accessories to connect"**.
+While a device is not approved, it enumerates and is then dropped, and
+`log show` says so:
+
+```
+AppleUSBHostPort::enumerateDeviceComplete: device functionality blocked by transport restrictions
+IOUSBHostDevice::start_block_invoke: device will not be registered for matching
+AppleUSBIORequest::complete: ... endpoint 0x00: status 0xe0005000 (pipe stalled)
+AppleUSBHostPort::terminateDevice: destroying 0x18d1/4ee7/0414 (...): hardware connection lost
+```
+
+`adb devices` and `fastboot devices` stay empty while this repeats, because
+the device node is never published. Set the policy to **Always**, re-plug,
+and approve the prompt if one appears. The tell that it is a policy problem
+and not a cable: the same VID/PID keeps coming back every couple of seconds
+without anyone touching the phone.
+
+Chrome and Edge can also seize the interface for WebUSB, which is visible in
+`ioreg -r -n <device> -d 3` as `Microsoft Edge` / `Google Chrome` user
+clients next to the `ADB Interface`. Quit the browser, then
+`adb kill-server && adb devices`.
+
+A phone that answers `unauthorized` is in Android with USB debugging on but
+has not been trusted yet: unlock it and accept the "Allow USB debugging"
+prompt (tick *always*), then `adb reboot bootloader` for fastboot.
 
 ## If the COM port will not open
 
@@ -259,11 +310,63 @@ better: it keeps painting a digest every 20 s, and as soon as it sees a
 so the GUI shows through. So for bring-up, boot **without** `sweetfb_noconsole`:
 
 ```
-python3 scripts/mkboot.py TEST_X.img TEST_Y.img --del sweetfb_noconsole
+python3 scripts/bootimg_args.py patch boot-raphael.img -sweetfb_noconsole
 ```
+
+(`bootimg_args.py` / `fat_args.py` edit the `args =` line in
+`EFI/UniXNU/unixnu.toml` inside the payload; the kernel, the device tree and
+the firmware are carried over byte for byte, so no rebuild is needed.)
 
 `TEST_Y.img` in this repository is exactly that: the same kernel, the same
 ADT and the same UEFI as `TEST_X.img`, with that one boot argument removed.
+
+## If the screen shows a wrench, a USB cable and a QR code
+
+That is not a Xiaomi screen. It is the **Mu / Project Aloha `Device Recovery`
+UI**: the QR decodes to `aka.ms/devicerecovery`, and on the bus the phone
+presents a Microsoft VID (`045e:066b`) with a garbage product string. It means
+the UEFI came up but had **nothing to boot**, so BDS fell through to recovery.
+
+Check the firmware volume, not the boot-image plumbing:
+
+```bash
+# the FV is LZMA-compressed (GUID EE4E5898-3914-4259-9D6E-DC7BD79403CF)
+python3 - SM8150_EFI.fd <<'EOF'
+import lzma, struct, sys
+d = open(sys.argv[1], 'rb').read()
+i = d.find(b'_FVH') - 40
+hdr = struct.unpack_from('<H', d, i + 48)[0]
+fsize = struct.unpack_from('<Q', d, i + 32)[0]
+p = i + hdr
+while p < i + fsize - 24:
+    size = int.from_bytes(d[p + 20:p + 23], 'little')
+    if size == 0:
+        break
+    s = p + 24
+    while s < p + size:
+        n = int.from_bytes(d[s:s + 3], 'little')
+        if n == 0:
+            break
+        if d[s + 3] == 2:                       # GUID_DEFINED -> nested FV
+            off = struct.unpack_from('<H', d, s + 20)[0]
+            fv = lzma.decompress(d[s + off:s + n], format=lzma.FORMAT_ALONE)
+            for m in (b'GUACESP', b'DarwinBoot', b'unixnu.toml'):
+                print(m.decode(), fv.count(m))
+            raise SystemExit(0)
+        s += (n + 3) // 4 * 4
+    p += (size + 7) // 8 * 8
+print('no GUID_DEFINED section found')
+EOF
+```
+
+All three must be non-zero. If they are all zero the firmware volume has no
+UniXNU boot manager in it at all -- which is exactly what happened here: the
+vendored `aloha-guacamole.patch` injects the four UniXNU modules into
+`Device/oneplus-guacamole/DXE.{inc,dsc.inc}` only, while this board builds
+`TARGET_DEVICE = xiaomi-raphael` from Aloha's native device directory.
+`scripts/build-firmware.py` now appends them to whichever device is targeted,
+so both `build-raphael` and `firmware-only` produce firmware that can boot the
+payload.
 
 ## Still open
 

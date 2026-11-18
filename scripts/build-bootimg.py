@@ -25,7 +25,16 @@ FDT_END = 9
 
 
 def patch_first_fdt_initrd(blob, start, end):
-    """Set /chosen/linux,initrd-start/end in the first FDT of a DTB table."""
+    """Set /chosen/linux,initrd-start/end in the first FDT of a DTB table.
+
+    The properties are OVERWRITTEN when they already exist.  Appending them
+    instead leaves two with the same name, and whoever reads the node gets the
+    stale one: the raphael DTB ships Android's values (0x84518000) ahead of the
+    appended pair, so Aloha read a ramdisk that was not there and fell through
+    to the Mu "Device Recovery" screen (aka.ms/devicerecovery) instead of the
+    UniXNU menu.  A property's cell width is kept as-is (4 or 8 bytes), so the
+    struct block does not move and the rest of the tree stays byte for byte.
+    """
     if blob[:4] != b"\xd0\x0d\xfe\xed":
         raise SystemExit("device tree: bad magic")
     (magic, total, off_struct, off_strings, off_rsv, version, last,
@@ -33,7 +42,7 @@ def patch_first_fdt_initrd(blob, start, end):
     if total > len(blob) or off_struct + size_struct > total or off_strings + size_strings > total:
         raise SystemExit("device tree: invalid first-blob extents")
     first, rest = blob[:total], blob[total:]
-    body = first[off_struct:off_struct + size_struct]
+    body = bytearray(first[off_struct:off_struct + size_struct])
     strings = bytearray(first[off_strings:off_strings + size_strings])
 
     def be32(at):
@@ -42,6 +51,7 @@ def patch_first_fdt_initrd(blob, start, end):
     depth = -1
     in_chosen = False
     insert_at = None
+    existing = {}
     i = 0
     while i < len(body):
         token = be32(i)
@@ -60,6 +70,11 @@ def patch_first_fdt_initrd(blob, start, end):
             depth -= 1
         elif token == FDT_PROP:
             length, nameoff = struct.unpack_from(">II", body, i)
+            if in_chosen and depth == 1:
+                nul = strings.index(0, nameoff)
+                name = bytes(strings[nameoff:nul]).decode()
+                if name in ("linux,initrd-start", "linux,initrd-end"):
+                    existing.setdefault(name, []).append((i + 8, length))
             i += 8 + ((length + 3) & ~3)
         elif token == FDT_NOP:
             pass
@@ -86,9 +101,20 @@ def patch_first_fdt_initrd(blob, start, end):
         record = struct.pack(">III", FDT_PROP, len(value), offset) + value
         return record + b"\0" * ((-len(value)) & 3)
 
-    props = prop("linux,initrd-start", struct.pack(">I", start))
-    props += prop("linux,initrd-end", struct.pack(">I", end))
-    body = body[:insert_at] + props + body[insert_at:]
+    props = b""
+    for name, value in (("linux,initrd-start", start), ("linux,initrd-end", end)):
+        for offset_, length in existing.get(name, ()):
+            # Fix every occurrence, including the duplicates an older build of
+            # this script may have appended, so no stale value can win.
+            if length not in (4, 8):
+                raise SystemExit(f"device tree: {name} is {length} bytes, expected 4 or 8")
+            if value >= 1 << (8 * length):
+                raise SystemExit(f"device tree: {name} = {value:#x} does not fit in {length} bytes")
+            body[offset_:offset_ + length] = value.to_bytes(length, "big")
+        if name not in existing:
+            props += prop(name, struct.pack(">I", value))
+    if props:
+        body = body[:insert_at] + props + body[insert_at:]
     patched = bytearray(first[:off_struct]) + body + bytes(strings)
     struct.pack_into(">I", patched, 4, len(patched))
     struct.pack_into(">I", patched, 12, off_struct + len(body))
