@@ -1,33 +1,38 @@
-Shorten the startup-entry trace so it survives a phone panel.
+Startup trace: seven-character lines, and an in-place mode for a frozen screen
 
-kernel_startup_initialize_upto() with startup_debug=0x1 prints
+startup_debug=0x1 prints one line per startup entry. Two problems on raphael:
 
-  kernel_startup_initialize_upto[16, rank 2147483647]: 0xfffffe0007ab7cf4(0)
+  * the full line is 73 characters and wraps onto two console lines, and the
+    tail of a wedged boot lands on the very last line, which the display's
+    rounded corner physically covers;
+  * the panel console is a ring ("lines wrap back to the top instead of
+    scrolling"), so once the log is longer than the screen the newest line is
+    no longer the bottom one.
 
-which is 73 characters and wraps onto two console lines.  On a 1080x2340
-panel the wrapped tail lands on the last console line, and on raphael the
-display's rounded corner clips exactly that line -- the one line that says
-where a wedged boot stopped.  Triangulating it from photographs cost an
-afternoon.
+Reading the wedge point back from photographs therefore cost a day of guessing.
 
-Print "K<subsystem><low 16 bits of func>" instead: seven characters, never
-wraps, never reaches the corner, and the low 16 bits still identify the
-entry against the kernel's symbol table.  Nothing else changes; the phase
-names kernel_startup_log() prints ("kernel_bootstrap: bsd_init" and friends)
-are short enough already.
+0x1 now prints "K<subsystem><func low16>" (seven characters, never wraps) and
+0x2 prints "\rM<subsystem><func low16>", which overwrites a single console line
+in place: the screen always shows exactly the last entry executed, whatever the
+ring is doing. The low 16 bits resolve against the kernel's symbols.
 
 --- a/osfmk/kern/startup.c
 +++ b/osfmk/kern/startup.c
-@@ -401,8 +401,10 @@
+@@ -402,8 +402,15 @@ kernel_startup_initialize_upto(startup_subsystem_id_t upto)
  	while (cur < startup_entries_end && cur->subsystem <= upto) {
  		if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
  		    startup_phase >= STARTUP_SUB_KPRINTF) {
 -			kprintf("%s[%d, rank %d]: %p(%p)\n", __func__,
 -			    cur->subsystem, cur->rank, cur->func, cur->arg);
-+			/* SWEETTRACE: seven chars, so the last line of a
-+			 * wedged boot stays clear of the rounded corner. */
-+			kprintf("K%02x%04x\n", (unsigned)cur->subsystem,
-+			    (unsigned)((uintptr_t)cur->func & 0xffffu));
++			if (startup_debug & 0x2) {
++				/* SWEETTRACE in-place: the marker overwrites one
++				 * console line, so it survives ring wrapping. */
++				kprintf("\rM%02x%04x", (unsigned)cur->subsystem,
++				    (unsigned)((uintptr_t)cur->func & 0xffffu));
++			} else {
++				kprintf("K%02x%04x\n", (unsigned)cur->subsystem,
++				    (unsigned)((uintptr_t)cur->func & 0xffffu));
++			}
  		}
  		startup_phase = cur->subsystem - 1;
  		kernel_startup_log(cur->subsystem);
