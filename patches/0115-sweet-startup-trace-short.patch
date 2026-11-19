@@ -1,0 +1,33 @@
+Shorten the startup-entry trace so it survives a phone panel.
+
+kernel_startup_initialize_upto() with startup_debug=0x1 prints
+
+  kernel_startup_initialize_upto[16, rank 2147483647]: 0xfffffe0007ab7cf4(0)
+
+which is 73 characters and wraps onto two console lines.  On a 1080x2340
+panel the wrapped tail lands on the last console line, and on raphael the
+display's rounded corner clips exactly that line -- the one line that says
+where a wedged boot stopped.  Triangulating it from photographs cost an
+afternoon.
+
+Print "K<subsystem><low 16 bits of func>" instead: seven characters, never
+wraps, never reaches the corner, and the low 16 bits still identify the
+entry against the kernel's symbol table.  Nothing else changes; the phase
+names kernel_startup_log() prints ("kernel_bootstrap: bsd_init" and friends)
+are short enough already.
+
+--- a/osfmk/kern/startup.c
++++ b/osfmk/kern/startup.c
+@@ -401,8 +401,10 @@
+ 	while (cur < startup_entries_end && cur->subsystem <= upto) {
+ 		if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
+ 		    startup_phase >= STARTUP_SUB_KPRINTF) {
+-			kprintf("%s[%d, rank %d]: %p(%p)\n", __func__,
+-			    cur->subsystem, cur->rank, cur->func, cur->arg);
++			/* SWEETTRACE: seven chars, so the last line of a
++			 * wedged boot stays clear of the rounded corner. */
++			kprintf("K%02x%04x\n", (unsigned)cur->subsystem,
++			    (unsigned)((uintptr_t)cur->func & 0xffffu));
+ 		}
+ 		startup_phase = cur->subsystem - 1;
+ 		kernel_startup_log(cur->subsystem);
