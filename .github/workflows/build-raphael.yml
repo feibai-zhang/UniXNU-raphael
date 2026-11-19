@@ -374,6 +374,14 @@ jobs:
           git -C uefi apply ../patches/aloha-guacamole.patch
           # drivers/DarwinBoot is a SUBMODULE OF UniXNU, not of the Aloha tree
           git -C unixnu/drivers/DarwinBoot apply ../../../patches/darwinboot-guacamole.patch
+          # raphael: DarwinBoot's window reservation had to be fixed before XNU got
+          # a usable memory window -- the DXE core refuses one AllocatePages that
+          # spans several free descriptors ("covers multiple entries" ->
+          # EFI_NOT_FOUND), and the map is unsorted so the first fit can be high.
+          # Without these the kernel boots and then dies silently right after
+          # vm_kernel_boostraped() with ~500 holes in its map.
+          git -C unixnu/drivers/DarwinBoot apply ../../../patches/0116-darwinboot-window-split.patch
+          git -C unixnu/drivers/DarwinBoot apply ../../../patches/0117-darwinboot-window-below4g.patch
           if [ "${{ inputs.variant || 'full' }}" = "bootshim_upstream" ]; then
             git -C uefi checkout -- BootShim/BootShim.S
             echo "variant: BootShim.S reverted to upstream (no DTB-pointer store)"

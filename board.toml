@@ -58,7 +58,7 @@ volume = "GUACESP"
 size_mib = 64
 loader = "firmware"
 title = "Redmi K20 Pro - XNU"
-dram_size = "0xc0000000"
+dram_size = "0xbe000000"
 panic_screen = false
 timeout = 3
 kernel_args = [
@@ -79,6 +79,7 @@ kernel_args = [
   "sweetusb=2",
   "sweettouchdelay=20",
   "sweetfb_noconsole=1",
+  "sweetpanel=0",
   "sweetfb_hz=30",
   "sweetgpu=3",
   "sweetlogdump=1",
@@ -87,10 +88,11 @@ kernel_args = [
 [payload.adt]
 tool = "scripts/make-raphael-adt.py"
 unique_chip_id = "required"
-# Match the working guacamole shim window. raphael has 6/8 GiB DRAM; 3 GiB also
-# gives XNU the full kernel-managed RAM range and reserves enough early I/O
-# page tables for the framebuffer.
-owned_memory_size = "0xc0000000"
+# Must fit one free UEFI run. On an 8 GiB raphael the largest run is
+# 0x140000000 + 0xc0000000, and DarwinBoot starts the window at a 32 MiB
+# boundary plus the kernel's 32 MiB offset, so a 3 GiB request (0xc0000000)
+# overruns it by ~16 MiB. 0xbe000000 fits with margin; dram_size must match.
+owned_memory_size = "0xbe000000"
 
 [bootimg.image]
 base = 0x0
