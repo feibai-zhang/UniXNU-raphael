@@ -55,12 +55,16 @@ def walk(path, verbose=False):
             fh.seek(consumed)
             ctype, _res, blocks, nbytes = struct.unpack("<HHII", fh.read(chunk_hdr))
             chunks.append((ctype, at, blocks, nbytes))
+            # This bootloader's chunk header counts its own 12 bytes in nbytes
+            # (389132 = 95 * 4096 + 12 for the first chunk of p00), unlike
+            # AOSP libsparse where chunk_sz is the payload alone.
+            payload = nbytes - chunk_hdr
             consumed += chunk_hdr
             if ctype in (CHUNK_RAW, CHUNK_FILL):
-                data = fh.read(nbytes)
-                if len(data) != nbytes:
+                data = fh.read(payload)
+                if len(data) != payload:
                     raise SystemExit(f"{path}: chunk data truncated at block {at}")
-                consumed += nbytes
+                consumed += payload
             at += blocks
         if at != total_blocks:
             raise SystemExit(f"{path}: chunks cover {at} blocks, header says {total_blocks}")

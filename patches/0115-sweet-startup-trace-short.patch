@@ -1,32 +1,35 @@
-Startup trace: seven-character lines, and an in-place mode for a frozen screen
+Boot-step trace: draw one short code in place on the panel console
 
-startup_debug=0x1 prints one line per startup entry. Two problems on raphael:
+Raphael boot sessions stop without any further output a few steps after the
+AppleCLCD driver registers, and the console is no help in working out where:
 
-  * the full line is 73 characters and wraps onto two console lines, and the
-    tail of a wedged boot lands on the very last line, which the display's
-    rounded corner physically covers;
-  * the panel console is a ring ("lines wrap back to the top instead of
-    scrolling"), so once the log is longer than the screen the newest line is
-    no longer the bottom one.
+  * the sweet framebuffer console is a ring ("lines wrap back to the top
+    instead of scrolling"), so once the log is longer than the screen the
+    newest line is no longer the bottom one;
+  * the bottom line is clipped by the display's rounded corner anyway;
+  * a full 73-character startup-entry line wraps onto two rows.
 
-Reading the wedge point back from photographs therefore cost a day of guessing.
+So draw markers in place with a carriage return: kernel_bootstrap_thread()
+prints \rB04 .. \rB18 before each step between the EARLY_BOOT init phase and
+bsd_init(), and (with startup_debug) kernel_startup_initialize_upto() prints
+either a seven-character "K<subsystem><func low16>" line or, with
+startup_debug=0x2, an in-place "\rM<subsystem><func low16>" marker. The screen
+then always shows exactly the last marker reached, whatever the ring is doing,
+and the low 16 bits resolve against the kernel's symbols.
 
-0x1 now prints "K<subsystem><func low16>" (seven characters, never wraps) and
-0x2 prints "\rM<subsystem><func low16>", which overwrites a single console line
-in place: the screen always shows exactly the last entry executed, whatever the
-ring is doing. The low 16 bits resolve against the kernel's symbols.
+Verified to apply against xnu-8796.101.5; no other patch in this repo or in
+ios-sweet touches osfmk/kern/startup.c, so the context is stable.
 
 --- a/osfmk/kern/startup.c
 +++ b/osfmk/kern/startup.c
-@@ -402,8 +402,15 @@ kernel_startup_initialize_upto(startup_subsystem_id_t upto)
+@@ -402,8 +402,14 @@ kernel_startup_initialize_upto(startup_subsystem_id_t upto)
  	while (cur < startup_entries_end && cur->subsystem <= upto) {
  		if ((startup_debug & STARTUP_DEBUG_VERBOSE) &&
  		    startup_phase >= STARTUP_SUB_KPRINTF) {
 -			kprintf("%s[%d, rank %d]: %p(%p)\n", __func__,
 -			    cur->subsystem, cur->rank, cur->func, cur->arg);
 +			if (startup_debug & 0x2) {
-+				/* SWEETTRACE in-place: the marker overwrites one
-+				 * console line, so it survives ring wrapping. */
++				/* In place: one line, immune to ring wrap. */
 +				kprintf("\rM%02x%04x", (unsigned)cur->subsystem,
 +				    (unsigned)((uintptr_t)cur->func & 0xffffu));
 +			} else {
@@ -36,3 +39,96 @@ ring is doing. The low 16 bits resolve against the kernel's symbols.
  		}
  		startup_phase = cur->subsystem - 1;
  		kernel_startup_log(cur->subsystem);
+@@ -695,6 +701,8 @@ kernel_bootstrap_thread(void)
+ 	 * Past this point, kernel subsystems that expect to operate with
+ 	 * interrupts or preemption enabled may begin enforcement.
+ 	 */
++	/* SWEETSTEP: the panel console is a ring, so draw the step in place. */
++	kprintf("\rB04");
+ 	kernel_startup_initialize_upto(STARTUP_SUB_EARLY_BOOT);
+ 
+ #if SCHED_HYGIENE_DEBUG
+@@ -706,25 +714,37 @@ kernel_bootstrap_thread(void)
+ 	/*
+ 	 * This will start displaying progress to the user, start as early as possible
+ 	 */
++	/* SWEETSTEP: the panel console is a ring, so draw the step in place. */
++	kprintf("\rB05");
+ 	initialize_screen(NULL, kPEAcquireScreen);
+ 
+ 	/*
+ 	 *	Initialize the shared region module.
+ 	 */
++	/* SWEETSTEP: the panel console is a ring, so draw the step in place. */
++	kprintf("\rB06");
+ 	vm_commpage_init();
++	/* SWEETSTEP: the panel console is a ring, so draw the step in place. */
++	kprintf("\rB07");
+ 	vm_commpage_text_init();
+ 
+ #if CONFIG_MACF
+ 	kernel_bootstrap_log("mac_policy_initmach");
++	/* SWEETSTEP: the panel console is a ring, so draw the step in place. */
++	kprintf("\rB08");
+ 	mac_policy_initmach();
+ #if CONFIG_VNGUARD
+ 	kernel_bootstrap_log("vnguard_policy_init");
++	/* SWEETSTEP: the panel console is a ring, so draw the step in place. */
++	kprintf("\rB09");
+ 	vnguard_policy_init();
+ #endif
+ #endif
+ 
+ #if CONFIG_DTRACE
+ 	kernel_bootstrap_log("dtrace_early_init");
++	/* SWEETSTEP: the panel console is a ring, so draw the step in place. */
++	kprintf("\rB10");
+ 	dtrace_early_init();
+ 	sdt_early_init();
+ #endif
+@@ -738,12 +758,16 @@ kernel_bootstrap_thread(void)
+ 	kernel_bootstrap_log("trust_cache_init");
+ 
+ 	/* Initialize the runtime for the trust cache interface */
++	/* SWEETSTEP: the panel console is a ring, so draw the step in place. */
++	kprintf("\rB11");
+ 	trust_cache_runtime_init();
+ 
+ 	/* Load the static and engineering trust caches */
+ 	load_static_trust_cache();
+ #endif
+ 
++	/* SWEETSTEP: the panel console is a ring, so draw the step in place. */
++	kprintf("\rB13");
+ 	kernel_startup_initialize_upto(STARTUP_SUB_LOCKDOWN);
+ 
+ 	/*
+@@ -753,13 +777,19 @@ kernel_bootstrap_thread(void)
+ 	 * the static KVA mappings used for the jettisoned bootstrap segments.
+ 	 */
+ 	kernel_bootstrap_log("OSKextRemoveKextBootstrap");
++	/* SWEETSTEP: the panel console is a ring, so draw the step in place. */
++	kprintf("\rB14");
+ 	OSKextRemoveKextBootstrap();
+ 
+ 	/* No changes to kernel text and rodata beyond this point. */
+ 	kernel_bootstrap_log("machine_lockdown");
++	/* SWEETSTEP: the panel console is a ring, so draw the step in place. */
++	kprintf("\rB15");
+ 	machine_lockdown();
+ 
+ #ifdef CONFIG_XNUPOST
++	/* SWEETSTEP: the panel console is a ring, so draw the step in place. */
++	kprintf("\rB16");
+ 	kern_return_t result = kernel_list_tests();
+ 	result = kernel_do_post();
+ 	if (result != KERN_SUCCESS) {
+@@ -787,6 +817,8 @@ kernel_bootstrap_thread(void)
+ 	 *	Start the user bootstrap.
+ 	 */
+ #ifdef  MACH_BSD
++	/* SWEETSTEP: the panel console is a ring, so draw the step in place. */
++	kprintf("\rB18");
+ 	bsd_init();
+ #endif
+ 
