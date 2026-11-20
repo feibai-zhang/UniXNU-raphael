@@ -71,7 +71,15 @@ DEVICES = {
         'fb_stride': 1440 * 4,
         'ufs': 0x01d84000,           # confirmed (ICE at 0x1d90000 too)
         'ufs_size': 0x3000,
-        'cpu_compat': 'qcom,kryo485',
+        # Must stay 'qcom,kryo470' even on a Kryo 485 part: ios-sweet's
+        # SweetCPU and SweetAppleKeyStore personalities both carry
+        # IONameMatch = 'qcom,kryo470' and IODTCompareNubName matches it
+        # against this string.  With 'qcom,kryo485' here the CPU driver never
+        # matches, so SweetCPU::startAll() never runs, the secondaries are
+        # never started and gIOAllCPUInitializedKey is never published: IOKit
+        # matching then stops dead after the framebuffer driver with no output
+        # and no interrupts.  The string is a match key, not a SoC claim.
+        'cpu_compat': 'qcom,kryo470',
         'cpus': 8,
         'cpu_regs': [0, 0x100, 0x200, 0x300, 0x400, 0x500, 0x600, 0x700],
         'cpu_clocks': [1785600000] * 4 + [2419200000] * 3 + [2841600000],
@@ -113,7 +121,15 @@ DEVICES = {
         'ufs': 0x01d84000,           # confirmed (ICE at 0x1d90000 too)
         'ufs_size': 0x3000,
         # Kryo 485: 4x A55 (silver) + 3x A76 (gold) + 1x A76 (prime) -- same as guacamole.
-        'cpu_compat': 'qcom,kryo485',
+        # Must stay 'qcom,kryo470' even on a Kryo 485 part: ios-sweet's
+        # SweetCPU and SweetAppleKeyStore personalities both carry
+        # IONameMatch = 'qcom,kryo470' and IODTCompareNubName matches it
+        # against this string.  With 'qcom,kryo485' here the CPU driver never
+        # matches, so SweetCPU::startAll() never runs, the secondaries are
+        # never started and gIOAllCPUInitializedKey is never published: IOKit
+        # matching then stops dead after the framebuffer driver with no output
+        # and no interrupts.  The string is a match key, not a SoC claim.
+        'cpu_compat': 'qcom,kryo470',
         'cpus': 8,
         'cpu_regs': [0, 0x100, 0x200, 0x300, 0x400, 0x500, 0x600, 0x700],
         'cpu_clocks': [1785600000] * 4 + [2419200000] * 3 + [2841600000],
