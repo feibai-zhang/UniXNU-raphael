@@ -58,7 +58,7 @@ volume = "GUACESP"
 size_mib = 64
 loader = "firmware"
 title = "Redmi K20 Pro - XNU"
-dram_size = "0xbe000000"
+dram_size = "0x80000000"
 panic_screen = false
 timeout = 3
 kernel_args = [
@@ -92,7 +92,7 @@ unique_chip_id = "required"
 # 0x140000000 + 0xc0000000, and DarwinBoot starts the window at a 32 MiB
 # boundary plus the kernel's 32 MiB offset, so a 3 GiB request (0xc0000000)
 # overruns it by ~16 MiB. 0xbe000000 fits with margin; dram_size must match.
-owned_memory_size = "0xbe000000"
+owned_memory_size = "0x80000000"
 
 [bootimg.image]
 base = 0x0
